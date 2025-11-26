@@ -5,15 +5,19 @@ Centralized risk scoring logic used across multiple endpoints.
 This ensures consistency and eliminates code duplication.
 """
 
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Any
 
 # ============================================
 # RISK SCORING CONFIGURATION
 # ============================================
 # These weights determine how different factors contribute to risk score
 
+# Anomaly detection constants
+ANOMALY_DETECTED = -1               # Isolation Forest returns -1 for anomalies
+NORMAL = 1                          # Isolation Forest returns 1 for normal
+
 # Anomaly detection weights
-ANOMALY_DETECTED_WEIGHT = 40        # Points added when anomaly is detected (-1)
+ANOMALY_DETECTED_WEIGHT = 40        # Points added when anomaly is detected
 EXTREME_ANOMALY_THRESHOLD = 0.15    # Anomaly score threshold for "extreme"
 EXTREME_ANOMALY_WEIGHT = 10         # Additional points for extreme anomaly scores
 
@@ -51,7 +55,7 @@ def calculate_risk_score(
     score = 0
     
     # Anomaly detection contribution
-    if anomaly_flag == -1:  # -1 indicates anomaly detected
+    if anomaly_flag == ANOMALY_DETECTED:
         score += ANOMALY_DETECTED_WEIGHT
     
     # Extreme anomaly contribution
@@ -77,7 +81,7 @@ def calculate_risk_from_analysis(
     anomaly_flag: int,
     anomaly_score: float,
     cluster_id: int
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Calculate risk score and return full risk analysis dictionary.
     

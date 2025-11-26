@@ -13,6 +13,9 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# Constants for anomaly detection
+ANOMALY_DETECTED = -1  # Isolation Forest returns -1 for anomalies
+
 
 class ConnectionManager:
     """
@@ -116,7 +119,7 @@ class ConnectionManager:
                     "is_holiday": data.get("IsHoliday")
                 },
                 "analysis": {
-                    "anomaly_detected": analysis_result.get("anomaly") == -1,
+                    "anomaly_detected": analysis_result.get("anomaly") == ANOMALY_DETECTED,
                     "anomaly_score": analysis_result.get("anomaly_score"),
                     "risk_level": analysis_result.get("risk_level"),
                     "risk_score": analysis_result.get("risk_score"),
