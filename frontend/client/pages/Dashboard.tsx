@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { fetchMetrics, fetchInventories, fetchForecast, fetchRecommendations, fetchKPIMetrics, fetchAnomalies, fetchRiskAnalysis, fetchAlerts } from "@/lib/api";
+import { useEffect, useState, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { fetchMetrics, fetchInventories, fetchForecast, fetchRecommendations, fetchKPIMetrics, fetchAnomalies, fetchRiskAnalysis, fetchAlerts, WS_ALERTS_URL } from "@/lib/api";
 import { demoMetrics, demoKPIMetrics } from "@/lib/demo-data";
 import useDocumentTitle from "@/hooks/use-document-title";
 import Navigation from "@/components/Navigation";
@@ -43,6 +43,7 @@ import type { InventorySnapshot, ForecastDetail, BusinessMetrics, SalesRecord, S
 import type { UploadResult } from "@/components/DataUploadPanel";
 
 export default function Dashboard() {
+  const queryClient = useQueryClient();
   const [dataLoaded, setDataLoaded] = useState(false);
   const [inventories, setInventories] = useState<InventorySnapshot[]>([]);
   const [forecastDetails, setForecastDetails] = useState<ForecastDetail[]>([]);
@@ -60,6 +61,12 @@ export default function Dashboard() {
   const [forecastStoreFilter, setForecastStoreFilter] = useState<string>("");
   const [forecastPeriods, setForecastPeriods] = useState<number>(6);
   const [forecastData, setForecastData] = useState<any[]>([]);
+  
+  // Real-time IoT data state
+  const [iotDataPoints, setIotDataPoints] = useState<any[]>([]);
+  const [realtimeAlerts, setRealtimeAlerts] = useState<any[]>([]);
+  const [wsConnected, setWsConnected] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
 
   // Set page title for Dashboard
   useDocumentTitle("Retail — Dashboard");
@@ -74,6 +81,113 @@ export default function Dashboard() {
     // setMetrics(processedMetrics);
     // etc.
   }, [dataLoaded]);
+
+  // Connect to WebSocket for real-time IoT data (only when using backend data, not CSV)
+  useEffect(() => {
+    // Only connect if user chose backend data (skipped CSV upload)
+    if (dataLoaded) return; // CSV uploaded, don't use WebSocket
+    
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: NodeJS.Timeout;
+
+    const connectWebSocket = () => {
+      try {
+        ws = new WebSocket(WS_ALERTS_URL);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          console.log("✅ WebSocket connected for real-time IoT data");
+          setWsConnected(true);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            
+            if (message.type === "iot_update") {
+              // Add new IoT data point
+              setIotDataPoints((prev) => {
+                const updated = [...prev, message];
+                // Keep only last 100 data points to prevent memory issues
+                return updated.slice(-100);
+              });
+
+              // Update KPI metrics based on accumulated IoT data
+              setIotDataPoints((prev) => {
+                const updated = [...prev, message].slice(-100);
+                // Calculate metrics from accumulated data
+                const salesValues = updated.map((d: any) => d.data?.weekly_sales || 0).filter((v: number) => v > 0);
+                if (salesValues.length > 0) {
+                  const avgSales = salesValues.reduce((a: number, b: number) => a + b, 0) / salesValues.length;
+                  const maxSales = Math.max(...salesValues);
+                  const minSales = Math.min(...salesValues);
+                  const volatility = Math.sqrt(
+                    salesValues.reduce((sum: number, val: number) => sum + Math.pow(val - avgSales, 2), 0) / salesValues.length
+                  );
+
+                  setKpiMetrics({
+                    avgWeeklySales: avgSales,
+                    maxSales: maxSales,
+                    minSales: minSales,
+                    volatility: volatility,
+                    holidaySalesAvg: avgSales * 1.2 // Estimate
+                  });
+                }
+                return updated;
+              });
+
+              // Invalidate queries to refresh dashboard
+              queryClient.invalidateQueries({ queryKey: ["kpi"] });
+              queryClient.invalidateQueries({ queryKey: ["alerts"] });
+              queryClient.invalidateQueries({ queryKey: ["anomalies"] });
+              queryClient.invalidateQueries({ queryKey: ["risk"] });
+            } else if (message.type === "alert") {
+              // Add new alert
+              setRealtimeAlerts((prev) => {
+                const updated = [{ ...message, id: Date.now() }, ...prev];
+                // Keep only last 20 alerts
+                return updated.slice(0, 20);
+              });
+
+              // Show notification or update alerts query
+              queryClient.invalidateQueries({ queryKey: ["alerts"] });
+            }
+          } catch (error) {
+            console.error("Error parsing WebSocket message:", error);
+          }
+        };
+
+        ws.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          setWsConnected(false);
+        };
+
+        ws.onclose = () => {
+          console.log("WebSocket disconnected, reconnecting...");
+          setWsConnected(false);
+          // Reconnect after 3 seconds
+          reconnectTimeout = setTimeout(connectWebSocket, 3000);
+        };
+      } catch (error) {
+        console.error("Failed to connect WebSocket:", error);
+        setWsConnected(false);
+        // Retry connection after 5 seconds
+        reconnectTimeout = setTimeout(connectWebSocket, 5000);
+      }
+    };
+
+    // Connect when component mounts (and user chose backend data)
+    connectWebSocket();
+
+    // Cleanup on unmount
+    return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (ws) {
+        ws.close();
+        wsRef.current = null;
+      }
+    };
+  }, [dataLoaded, queryClient]);
 
   // Query backend for API-driven values (fallback to demo data in fetch functions)
   const metricsQuery = useQuery({ queryKey: ["metrics"], queryFn: fetchMetrics, staleTime: 60_000 });
@@ -687,13 +801,69 @@ export default function Dashboard() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-orange-500" />
-                Real-Time Alerts
+                Real-Time Alerts {!dataLoaded && iotDataPoints.length > 0 && (
+                  <span className="text-sm font-normal text-muted-foreground">
+                    ({iotDataPoints.length} IoT updates)
+                  </span>
+                )}
               </CardTitle>
               <p className="text-sm text-foreground/60 mt-2">
-                Instant notifications to keep you ahead of critical events
+                {!dataLoaded 
+                  ? "Live IoT data stream - Updates appear automatically as data arrives"
+                  : "Instant notifications to keep you ahead of critical events"
+                }
               </p>
             </CardHeader>
             <CardContent>
+              {/* Show real-time alerts from WebSocket if available */}
+              {!dataLoaded && realtimeAlerts.length > 0 && (
+                <div className="space-y-3 mb-6">
+                  {realtimeAlerts.map((alert: any) => (
+                    <div
+                      key={alert.id}
+                      className="p-4 border-2 border-red-200 bg-red-50 rounded-lg"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <p className="font-semibold text-red-900">{alert.message}</p>
+                          <p className="text-xs text-red-700 mt-1">
+                            Store: {alert.store} | Dept: {alert.dept} | Risk Score: {alert.risk_score}
+                          </p>
+                          <p className="text-xs text-red-600 mt-1">
+                            {new Date(alert.timestamp).toLocaleString()}
+                          </p>
+                        </div>
+                        <span className="text-xs font-semibold px-3 py-1 bg-red-200 text-red-800 rounded-full">
+                          HIGH RISK
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Show latest IoT data points */}
+              {!dataLoaded && iotDataPoints.length > 0 && (
+                <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm font-semibold text-blue-900 mb-2">
+                    📊 Latest IoT Data Points
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    {iotDataPoints.slice(-4).reverse().map((point: any, idx: number) => (
+                      <div key={idx} className="bg-white p-2 rounded border">
+                        <p className="font-semibold">Store {point.data?.store}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Sales: ${point.data?.weekly_sales?.toFixed(2)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Risk: {point.analysis?.risk_level}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-3">
                 {displayInventories
                   .map((inv) => {

@@ -27,6 +27,113 @@ export const WS_BASE_URL = API_BASE_URL.replace("http", "ws").replace("https", "
 export const WS_ALERTS_URL = `${WS_BASE_URL}/ws/alerts`;
 
 // ============================================
+// AUTHENTICATION
+// ============================================
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  username: string;
+}
+
+export interface UserResponse {
+  username: string;
+  is_admin: boolean;
+}
+
+/**
+ * Get stored auth token from localStorage
+ */
+export function getAuthToken(): string | null {
+  return localStorage.getItem("auth_token");
+}
+
+/**
+ * Store auth token in localStorage
+ */
+export function setAuthToken(token: string): void {
+  localStorage.setItem("auth_token", token);
+}
+
+/**
+ * Remove auth token from localStorage
+ */
+export function removeAuthToken(): void {
+  localStorage.removeItem("auth_token");
+}
+
+/**
+ * Login as admin
+ */
+export async function login(username: string, password: string): Promise<LoginResponse> {
+  const res = await fetch(`${API_V1}/auth/login/json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ username, password }),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Login failed" }));
+    throw new Error(error.detail || "Login failed");
+  }
+
+  const data: LoginResponse = await res.json();
+  setAuthToken(data.access_token);
+  return data;
+}
+
+/**
+ * Logout (clear token)
+ */
+export async function logout(): Promise<void> {
+  const token = getAuthToken();
+  if (!token) return;
+
+  try {
+    await fetch(`${API_V1}/auth/logout`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+      },
+    });
+  } catch (error) {
+    // Ignore errors on logout
+    console.error("Logout error:", error);
+  } finally {
+    removeAuthToken();
+  }
+}
+
+/**
+ * Get current authenticated user
+ */
+export async function getCurrentUser(): Promise<UserResponse> {
+  const token = getAuthToken();
+  if (!token) {
+    throw new Error("Not authenticated");
+  }
+
+  const res = await fetch(`${API_V1}/auth/me`, {
+    headers: {
+      "Authorization": `Bearer ${token}`,
+    },
+  });
+
+  if (!res.ok) {
+    if (res.status === 401) {
+      removeAuthToken();
+      throw new Error("Session expired");
+    }
+    throw new Error("Failed to get user");
+  }
+
+  return res.json();
+}
+
+// ============================================
 // KPI METRICS
 // ============================================
 export async function fetchKPIMetrics(storeId?: number, dept?: number): Promise<KPIMetrics> {

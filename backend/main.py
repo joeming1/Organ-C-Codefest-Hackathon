@@ -18,6 +18,7 @@ from routes.cluster import router as cluster_router
 from routes.stores import router as stores_router
 from routes.recommendations import router as recommendations_router
 from routes.websocket import router as websocket_router  # WebSocket routes
+from routes.auth import router as auth_router  # Admin authentication routes
 from routes.schemas import HealthResponse
 
 # DATABASE
@@ -117,6 +118,7 @@ app.include_router(websocket_router, prefix="/ws", tags=["🔌 WebSocket"])
 # ============================================
 # API v1 ROUTES
 # ============================================
+app.include_router(auth_router, prefix=f"{API_V1_PREFIX}/auth", tags=["🔐 Authentication"])
 app.include_router(iot_router, prefix=f"{API_V1_PREFIX}/iot", tags=["IoT Ingestion"])
 app.include_router(stores_router, prefix=f"{API_V1_PREFIX}/stores", tags=["Stores"])
 app.include_router(recommendations_router, prefix=f"{API_V1_PREFIX}/recommendations", tags=["Recommendations"])
