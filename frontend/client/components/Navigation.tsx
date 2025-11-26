@@ -1,10 +1,18 @@
-import { Link } from "react-router-dom";
-// Auth CTAs removed; Button import not required here
-import { Menu, X } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Menu, X, LogOut, User } from "lucide-react";
 import { useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { isAuthenticated, user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate("/login");
+  };
 
   return (
     <>
@@ -25,13 +33,37 @@ export default function Navigation() {
               >
                 Home
               </Link>
-              <Link
-                to="/dashboard"
-                className="text-sm font-medium text-foreground/70 hover:text-foreground transition-colors"
-              >
-                Dashboard
-              </Link>
-              {/* Features & Pricing removed */}
+              {isAuthenticated && (
+                <Link
+                  to="/dashboard"
+                  className="text-sm font-medium text-foreground/70 hover:text-foreground transition-colors"
+                >
+                  Dashboard
+                </Link>
+              )}
+              {isAuthenticated ? (
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2 text-sm text-foreground/70">
+                    <User className="w-4 h-4" />
+                    <span>{user?.username}</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleLogout}
+                    className="gap-2"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Logout
+                  </Button>
+                </div>
+              ) : (
+                <Link to="/login">
+                  <Button variant="default" size="sm">
+                    Admin Login
+                  </Button>
+                </Link>
+              )}
             </div>
 
 
@@ -57,13 +89,37 @@ export default function Navigation() {
               >
                 Home
               </Link>
-              <Link
-                to="/dashboard"
-                className="block text-sm font-medium text-foreground/70 hover:text-foreground transition-colors py-2"
-              >
-                Dashboard
-              </Link>
-
+              {isAuthenticated && (
+                <Link
+                  to="/dashboard"
+                  className="block text-sm font-medium text-foreground/70 hover:text-foreground transition-colors py-2"
+                >
+                  Dashboard
+                </Link>
+              )}
+              {isAuthenticated ? (
+                <>
+                  <div className="flex items-center gap-2 text-sm text-foreground/70 py-2">
+                    <User className="w-4 h-4" />
+                    <span>{user?.username}</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleLogout}
+                    className="w-full gap-2"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Logout
+                  </Button>
+                </>
+              ) : (
+                <Link to="/login" className="block">
+                  <Button variant="default" size="sm" className="w-full">
+                    Admin Login
+                  </Button>
+                </Link>
+              )}
             </div>
           )}
         </div>

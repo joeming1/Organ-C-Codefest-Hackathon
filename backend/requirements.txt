@@ -13,3 +13,6 @@ sqlalchemy
 psycopg2-binary
 websockets
 slowapi
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
