@@ -96,9 +96,19 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # ============================================
 # MIDDLEWARE (must be before routes)
 # ============================================
+# Configure CORS with explicit origins to avoid wildcard with credentials.
+# Browsers will reject Access-Control-Allow-Origin:"*" when Access-Control-Allow-Credentials is true.
+ALLOWED_ORIGINS = [
+    "https://organ-c-codefest-hackathon.vercel.app",
+    "https://organ-c-codefest-hackathon-production.up.railway.app",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://192.168.0.7:8080",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

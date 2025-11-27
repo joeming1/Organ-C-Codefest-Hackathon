@@ -11,7 +11,7 @@ import { demoRecommendations } from "./demo-data";
 // 
 // To force production API (e.g., testing production from localhost):
 // Set FORCE_PRODUCTION = true
-const FORCE_PRODUCTION = true;
+const FORCE_PRODUCTION = false;
 
 // Detect if we're in development mode
 // Checks if running on localhost/127.0.0.1 (local dev server)

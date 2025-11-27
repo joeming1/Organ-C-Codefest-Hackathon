@@ -319,8 +319,8 @@ export default function DataUploadPanel({ onDataLoaded }: DataUploadPanelProps) 
             return (
               <Card key={feature.title} className="futuristic-card text-center hover-lift">
                 <CardContent className="p-6">
-                  <Icon className="w-8 h-8 text-primary mx-auto mb-3 neon-glow" />
-                  <h3 className="font-semibold text-foreground mb-2">
+                  <Icon className="w-6 h-6 text-primary mx-auto mb-2 neon-glow" />
+                  <h3 className="font-semibold text-foreground mb-1 text-sm">
                     {feature.title}
                   </h3>
                   <p className="text-xs text-foreground/60">{feature.desc}</p>

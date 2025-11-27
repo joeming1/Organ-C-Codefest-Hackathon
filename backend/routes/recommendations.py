@@ -100,7 +100,7 @@ def generate_recommendations(store_id: int, risk_level: str, cluster_id: int,
 
 @router.get("/", response_model=RecommendationsResponse)
 def get_recommendations(
-    store_id: int = Query(..., description="Store ID to analyze", ge=1)
+    store_id: int = Query(1, description="Store ID to analyze", ge=1)
 ):
     """
     Get AI-powered optimization recommendations for a specific store.

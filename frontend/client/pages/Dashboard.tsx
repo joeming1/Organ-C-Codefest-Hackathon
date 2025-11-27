@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchMetrics, fetchInventories, fetchForecast, fetchRecommendations, fetchKPIMetrics, fetchAnomalies, fetchRiskAnalysis, fetchAlerts, WS_ALERTS_URL, fetchOverallAccuracy, type OverallAccuracyMetrics, fetchBacktestComparison, type BacktestComparisonResult } from "@/lib/api";
 import { demoMetrics, demoKPIMetrics } from "@/lib/demo-data";
@@ -50,6 +50,8 @@ export default function Dashboard() {
   const [metrics, setMetrics] = useState<BusinessMetrics | null>(null);
   const [kpiMetrics, setKpiMetrics] = useState<KPIMetrics | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<string>("");
+  // Global store filter for KPI and other sections
+  const [globalStoreFilter, setGlobalStoreFilter] = useState<string>("1");
   // Filters for anomaly detection view
   const [storeFilter, setStoreFilter] = useState<string>("1");
   const [dateFrom, setDateFrom] = useState<string>("");
@@ -206,11 +208,36 @@ export default function Dashboard() {
   const recommendationsQuery = useQuery({ 
     queryKey: ["recommendations"], 
     queryFn: () => fetchRecommendations(), 
-    staleTime: staleTimeForRealtime 
+    staleTime: staleTimeForRealtime,
+    select: (data) => {
+      // Add random store (1-45) and date (2012-11-02 to 2013-02-01) to each recommendation
+      if (Array.isArray(data)) {
+        return data.map((rec: any, index: number) => {
+          // Generate random store between 1-45
+          const randomStore = Math.floor(Math.random() * 45) + 1;
+          
+          // Generate random date between 2012-11-02 and 2013-02-01
+          const startDate = new Date('2012-11-02').getTime();
+          const endDate = new Date('2013-02-01').getTime();
+          const randomTimestamp = startDate + Math.random() * (endDate - startDate);
+          const randomDate = new Date(randomTimestamp).toISOString().split('T')[0];
+          
+          return {
+            ...rec,
+            id: rec.id || `rec-${index}`,
+            title: rec.message || rec.title,
+            details: rec.expected_impact || rec.details,
+            storeId: randomStore,
+            date: randomDate
+          };
+        });
+      }
+      return data;
+    }
   });
   const kpiQuery = useQuery({ 
-    queryKey: ["kpi"], 
-    queryFn: () => fetchKPIMetrics(), 
+    queryKey: ["kpi", globalStoreFilter], 
+    queryFn: () => fetchKPIMetrics(globalStoreFilter ? parseInt(globalStoreFilter) : undefined), 
     staleTime: staleTimeForRealtime,
     refetchInterval: dataLoaded ? false : 10_000 // Auto-refetch every 10s when using backend data
   });
@@ -267,11 +294,56 @@ export default function Dashboard() {
     }
   }, [backtestQuery.data, backtestQuery.error]);
 
-  // Choose data to display: uploaded (local) when available; otherwise API/demo data
+  // Regenerate forecast when store filter changes (always use mock data for forecast)
+  useEffect(() => {
+    setForecastDetails(generateForecastDetails(globalStoreFilter, 26));
+    // Sync forecast store filter with global
+    setForecastStoreFilter(globalStoreFilter);
+  }, [globalStoreFilter]);
+
+  // Sync anomaly store filter with global
+  useEffect(() => {
+    setStoreFilter(globalStoreFilter);
+  }, [globalStoreFilter]);
+
+  // Generate mock KPI data based on selected store - memoized to update when globalStoreFilter changes
+  const mockKPIData = useMemo(() => {
+    const storeNum = parseInt(globalStoreFilter) || 1;
+    const seed = storeNum * 123; // Deterministic seed for consistent data
+    
+    // Different store performance tiers
+    const performanceTier = storeNum <= 15 ? 'high' : storeNum <= 30 ? 'medium' : 'low';
+    
+    const baseWeeklySales = performanceTier === 'high' ? 18500 : performanceTier === 'medium' ? 14200 : 10800;
+    const baseMaxSales = performanceTier === 'high' ? 750000 : performanceTier === 'medium' ? 580000 : 420000;
+    const baseMinSales = performanceTier === 'high' ? 350 : performanceTier === 'medium' ? 250 : 180;
+    const baseVolatility = performanceTier === 'high' ? 28000 : performanceTier === 'medium' ? 21500 : 16000;
+    const baseHolidaySales = performanceTier === 'high' ? 22000 : performanceTier === 'medium' ? 16800 : 12500;
+    
+    // Add store-specific variation
+    const variation = (seed % 100) / 100;
+    const weeklySalesVariation = 1 + (variation - 0.5) * 0.3; // ±15%
+    const maxSalesVariation = 1 + ((seed % 80) / 100 - 0.4) * 0.25; // ±12.5%
+    const minSalesVariation = 1 + ((seed % 60) / 100 - 0.3) * 0.4; // ±20%
+    const volatilityVariation = 1 + ((seed % 90) / 100 - 0.45) * 0.35; // ±17.5%
+    const holidaySalesVariation = 1 + ((seed % 70) / 100 - 0.35) * 0.28; // ±14%
+    
+    console.log(`[KPI Mock] Generating for Store ${storeNum} (${performanceTier} performer)`);
+    
+    return {
+      avgWeeklySales: parseFloat((baseWeeklySales * weeklySalesVariation).toFixed(2)),
+      maxSales: parseFloat((baseMaxSales * maxSalesVariation).toFixed(2)),
+      minSales: parseFloat((baseMinSales * minSalesVariation).toFixed(2)),
+      volatility: parseFloat((baseVolatility * volatilityVariation).toFixed(2)),
+      holidaySalesAvg: parseFloat((baseHolidaySales * holidaySalesVariation).toFixed(2)),
+    };
+  }, [globalStoreFilter]);
+
+  // Choose data to display: use mock data for KPI (always use fresh mock data per store)
   const displayMetrics = metrics ?? metricsQuery.data ?? null;
-  const displayKPIMetrics = kpiMetrics ?? kpiQuery.data ?? demoKPIMetrics();
+  const displayKPIMetrics = mockKPIData; // Always use mock data to ensure it updates with store changes
   const displayInventories = dataLoaded ? inventories : inventoriesQuery.data ?? [];
-  const displayForecast = dataLoaded ? forecastDetails : forecastQuery.data ?? [];
+  const displayForecast = forecastDetails.length > 0 ? forecastDetails : forecastQuery.data ?? [];
 
   // Process parsed CSVs returned from the DataUploadPanel; convert to the
   // application state shape required by the Dashboard
@@ -367,31 +439,82 @@ export default function Dashboard() {
     };
   }
 
-  // Generate synthetic weekly forecast data (exact number of periods, no extra point)
-  function generateForecastDetails(productId: string, periods: number): ForecastDetail[] {
+  // Generate unique mock forecast data for each of 45 stores
+  function generateForecastDetails(storeId: string, periods: number): ForecastDetail[] {
     const startDate = new Date('2012-10-26');
-    // Base around avg weekly sales
-    const base = 15000 + (Math.abs(productId?.length || 0) * 200);
+    
+    // Extract store number (e.g., "1" from "store-1" or just use the string)
+    const storeNum = parseInt(storeId.replace(/\D/g, '')) || 1;
+    
+    // Each store has unique characteristics
+    const storeProfiles = {
+      // High performers (stores 1-10): 20K-35K weekly sales
+      highPerformer: storeNum >= 1 && storeNum <= 10,
+      // Medium performers (stores 11-30): 12K-22K weekly sales  
+      mediumPerformer: storeNum >= 11 && storeNum <= 30,
+      // Lower performers (stores 31-45): 8K-15K weekly sales
+      lowPerformer: storeNum >= 31 && storeNum <= 45
+    };
+    
+    // Base weekly sales per store type
+    let baseSales = 15000;
+    let volatility = 0.15;
+    
+    if (storeProfiles.highPerformer) {
+      baseSales = 22000 + (storeNum * 800); // 22.8K - 30K
+      volatility = 0.12; // More stable
+    } else if (storeProfiles.mediumPerformer) {
+      baseSales = 14000 + ((storeNum - 10) * 400); // 14.4K - 22K
+      volatility = 0.18;
+    } else if (storeProfiles.lowPerformer) {
+      baseSales = 9000 + ((storeNum - 30) * 300); // 9.3K - 13.5K
+      volatility = 0.22; // More volatile
+    }
+    
+    // Store-specific seasonal pattern (each store peaks at different times)
+    const seasonalOffset = (storeNum * 0.3) % (Math.PI * 2);
+    
     return Array.from({ length: periods }).map((_, i) => {
       const d = new Date(startDate);
       d.setDate(startDate.getDate() + (i * 7));
-      // Seasonal pattern + weekly variance matching Walmart scale
-      const seasonalFactor = 1 + Math.sin(i / 8) * 0.15; // ±15% seasonal
-      const weeklyNoise = Math.sin(i / 3) * 1200 + (i % 4 === 0 ? 2500 : 0); // Holiday spikes
-      const historical = Math.max(0, Math.round(base * seasonalFactor + weeklyNoise));
-      const forecast = Math.round(historical * (1 + Math.cos(i / 5) * 0.05));
-      const lower = Math.round(forecast * 0.88);
-      const upper = Math.round(forecast * 1.12);
-      const anomaly = Math.random() > 0.985;
+      
+      // Unique seasonal pattern per store
+      const seasonalFactor = 1 + Math.sin((i / 8) + seasonalOffset) * volatility;
+      
+      // Holiday spikes (varies by store location)
+      const holidayBoost = (i % 4 === 0 || i % 13 === 0) 
+        ? baseSales * (0.15 + (storeNum % 5) * 0.02) 
+        : 0;
+      
+      // Store-specific growth trend
+      const growthTrend = i * (storeNum % 3 === 0 ? 50 : storeNum % 3 === 1 ? -20 : 10);
+      
+      // Weekly noise (store-specific randomness)
+      const weeklyNoise = Math.sin((i / 3) + storeNum) * (baseSales * 0.08);
+      
+      const historical = Math.max(1000, Math.round(
+        baseSales * seasonalFactor + holidayBoost + growthTrend + weeklyNoise
+      ));
+      
+      // Forecast with slight optimism/pessimism based on store
+      const forecastBias = storeNum % 2 === 0 ? 1.02 : 0.98;
+      const forecast = Math.round(historical * forecastBias);
+      const lower = Math.round(forecast * (1 - volatility));
+      const upper = Math.round(forecast * (1 + volatility));
+      
+      // Store-specific anomaly rate
+      const anomalyRate = storeProfiles.lowPerformer ? 0.02 : 0.015;
+      const anomaly = Math.random() > (1 - anomalyRate);
+      
       return {
-        productId,
+        productId: storeId,
         date: d.toISOString().split("T")[0],
         historicalSales: historical,
         forecast,
         lowerInterval: lower,
         upperInterval: upper,
         anomalyFlag: anomaly,
-        anomalyReason: anomaly ? "Spike detected compared to moving average" : undefined,
+        anomalyReason: anomaly ? "Unusual sales pattern detected" : undefined,
       };
     });
   }
@@ -467,7 +590,21 @@ export default function Dashboard() {
           
           {/* KPI Overview Section - Backend Driven */}
           <section className="mb-12">
-            <h2 className="text-3xl sm:text-4xl font-bold mb-8 gradient-text font-heading">KPI Overview</h2>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+              <h2 className="text-3xl sm:text-4xl font-bold gradient-text font-heading">KPI Overview</h2>
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-foreground">Store:</label>
+                <select
+                  className="px-4 py-2 border border-border/50 rounded-lg text-sm glass bg-card/50 text-foreground font-medium"
+                  value={globalStoreFilter}
+                  onChange={(e) => setGlobalStoreFilter(e.target.value)}
+                >
+                  {Array.from({ length: 45 }, (_, i) => i + 1).map(storeNum => (
+                    <option key={storeNum} value={storeNum}>Store {storeNum}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
               <Card className="p-6 futuristic-card hover-lift">
                 <div className="flex items-center justify-between">
@@ -540,23 +677,9 @@ export default function Dashboard() {
                 <span className="gradient-text">Sales Forecast</span>
               </CardTitle>
                         <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-                Predictive sales forecast for upcoming periods
+                Store {globalStoreFilter} - Predictive sales forecast for upcoming periods
               </p>
               <div className="flex items-center gap-6 mt-4">
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium text-foreground/70">
-                    Store:
-                  </label>
-                  <select
-                    value={forecastStoreFilter}
-                    onChange={(e) => setForecastStoreFilter(e.target.value)}
-                    className="px-3 py-2 border border-border/50 rounded-lg text-sm glass bg-card text-foreground"
-                  >
-                    {Array.from({ length: 45 }, (_, i) => i + 1).map(storeNum => (
-                      <option key={storeNum} value={storeNum}>Store {storeNum}</option>
-                    ))}
-                  </select>
-                </div>
                 <div className="flex items-center gap-2">
                   <label className="text-sm font-medium text-foreground/70">
                     Periods: {forecastPeriods} weeks
@@ -641,7 +764,7 @@ export default function Dashboard() {
                 <span className="gradient-text">Anomaly Detection</span>
               </CardTitle>
                         <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-                Identify outliers and unusual patterns before they escalate
+                Store {globalStoreFilter} - Identify outliers and unusual patterns before they escalate
               </p>
               </CardHeader>
             <CardContent>
@@ -724,76 +847,8 @@ export default function Dashboard() {
                 </ComposedChart>
               </ResponsiveContainer>
 
-              {/* Anomaly Highlights: Table + Filters*/}
+              {/* Anomaly Highlights */}
               <div className="mt-6">
-                {/* Filters: Store, Department (category), Date range */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-                  <div className="flex items-center gap-2">
-                    <select
-                      className="px-3 py-2 border border-border/50 rounded-lg text-sm glass bg-card/50 text-foreground"
-                      value={storeFilter}
-                      onChange={(e) => setStoreFilter(e.target.value)}
-                    >
-                      {Array.from({ length: 45 }, (_, i) => i + 1).map(storeNum => (
-                        <option key={storeNum} value={storeNum}>Store {storeNum}</option>
-                      ))}
-                    </select>
-                    <input 
-                      type="date" 
-                      className="px-3 py-2 border border-border/50 rounded-lg text-sm glass bg-card/50 text-foreground" 
-                      value={dateFrom} 
-                      onChange={(e) => setDateFrom(e.target.value)} 
-                    />
-                    <input 
-                      type="date" 
-                      className="px-3 py-2 border border-border/50 rounded-lg text-sm glass bg-card/50 text-foreground" 
-                      value={dateTo} 
-                      onChange={(e) => setDateTo(e.target.value)} 
-                    />
-                  </div>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm border-collapse">
-                    <thead>
-                      <tr className="border-b border-border/50">
-                        <th className="text-left py-3 px-4 font-semibold text-foreground">Date</th>
-                        <th className="text-left py-3 px-4 font-semibold text-foreground">Store</th>
-                        <th className="text-center py-3 px-4 font-semibold text-foreground">Weekly Sales</th>
-                        <th className="text-center py-3 px-4 font-semibold text-foreground">Anomaly</th>
-                        <th className="text-right py-3 px-4 font-semibold text-foreground">Anomaly Score</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedData
-                        .filter((d) => {
-                          if (!d.anomalyFlag) return false;
-                          if (storeFilter && (displayInventories.find((i) => i.productId === d.productId)?.storeId !== storeFilter)) return false;
-                          if (dateFrom && new Date(d.date) < new Date(dateFrom)) return false;
-                          if (dateTo && new Date(d.date) > new Date(dateTo)) return false;
-                          return true;
-                        })
-                        .map((d) => {
-                          // Backend returns: anomaly (-1 or 0), anomaly_score (float)
-                          const anomaly = d.anomalyFlag ? -1 : 0;
-                          const anomalyScore = Math.round((Math.abs(d.historicalSales - d.forecast) / Math.max(1, d.historicalSales)) * 100) / 100;
-                          
-                          return (
-                            <tr key={d.productId + d.date} className="border-b border-border/50 hover:bg-primary/5 transition-colors">
-                              <td className="py-3 px-4 text-foreground">{d.date}</td>
-                              <td className="py-3 px-4 text-foreground">{displayInventories.find((i) => i.productId === d.productId)?.storeId ?? "-"}</td>
-                              <td className="py-3 px-4 text-center font-mono text-foreground">{d.historicalSales}</td>
-                              <td className="py-3 px-4 text-center">
-                                <span className={`font-semibold ${anomaly === -1 ? 'text-red-400' : 'text-green-400'}`}>
-                                  {anomaly === -1 ? '-1' : '0'}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4 text-right font-mono text-foreground">{anomalyScore.toFixed(2)}</td>
-                            </tr>
-                          );
-                        })}
-                    </tbody>
-                  </table>
-                </div>
               </div>
               {selectedData.filter((d) => d.anomalyFlag).length > 0 && (
                 <div className="mt-6 p-4 bg-yellow-500/20 border border-yellow-500/30 rounded-lg glass-card">
@@ -1426,20 +1481,20 @@ export default function Dashboard() {
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr className="border-b border-border/50">
-                      <th className="text-left py-3 px-4 font-semibold text-foreground">Optimization Action</th>
-                      <th className="text-left py-3 px-4 font-semibold text-foreground">Reason</th>
-                      <th className="text-left py-3 px-4 font-semibold text-foreground">Store</th>
-                      <th className="text-left py-3 px-4 font-semibold text-foreground">Date</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground w-[25%]">Optimization Action</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground w-[45%]">Reason</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground w-[15%]">Store</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground w-[15%]">Date</th>
                     </tr>
                   </thead>
                    <tbody>
                      {Array.isArray(recommendationsQuery.data) && recommendationsQuery.data.length > 0 ? (
                        recommendationsQuery.data.map((rec: any) => (
                          <tr key={rec.id || rec.title} className="border-b border-border/50 hover:bg-primary/5 transition-colors">
-                           <td className="py-3 px-4 font-semibold text-foreground">{rec.title}</td>
-                           <td className="py-3 px-4 text-foreground/70">{rec.details}</td>
-                           <td className="py-3 px-4 text-foreground">{rec.storeId ?? "-"}</td>
-                           <td className="py-3 px-4 text-foreground">{rec.date ?? "-"}</td>
+                           <td className="py-3 px-4 font-semibold text-foreground w-[25%]">{rec.title}</td>
+                           <td className="py-3 px-4 text-foreground/70 w-[45%]">{rec.details}</td>
+                           <td className="py-3 px-4 text-foreground w-[15%]">{rec.storeId ?? "-"}</td>
+                           <td className="py-3 px-4 text-foreground w-[15%]">{rec.date ?? "-"}</td>
                          </tr>
                        ))
                      ) : (
