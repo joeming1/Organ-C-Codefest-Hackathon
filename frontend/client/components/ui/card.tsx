@@ -5,16 +5,21 @@ import { cn } from "@/lib/utils";
 const Card = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn(
-      "rounded-lg border bg-card text-card-foreground shadow-sm",
-      className,
-    )}
-    {...props}
-  />
-));
+>(({ className, ...props }, ref) => {
+  // If futuristic-card is in className, don't apply bg-card (it will be handled by the class)
+  const hasFuturistic = className?.includes('futuristic-card');
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "rounded-lg border text-card-foreground shadow-sm",
+        !hasFuturistic && "bg-card/50 backdrop-blur-sm",
+        className,
+      )}
+      {...props}
+    />
+  );
+});
 Card.displayName = "Card";
 
 const CardHeader = React.forwardRef<

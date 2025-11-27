@@ -170,3 +170,8 @@ async def logout(admin: str = Depends(get_current_admin)):
     logger.info(f"Admin logout: {admin}")
     return {"message": "Logged out successfully"}
 
+
+
+
+
+

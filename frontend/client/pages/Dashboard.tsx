@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchMetrics, fetchInventories, fetchForecast, fetchRecommendations, fetchKPIMetrics, fetchAnomalies, fetchRiskAnalysis, fetchAlerts, WS_ALERTS_URL } from "@/lib/api";
+import { fetchMetrics, fetchInventories, fetchForecast, fetchRecommendations, fetchKPIMetrics, fetchAnomalies, fetchRiskAnalysis, fetchAlerts, WS_ALERTS_URL, fetchOverallAccuracy, type OverallAccuracyMetrics, fetchBacktestComparison, type BacktestComparisonResult } from "@/lib/api";
 import { demoMetrics, demoKPIMetrics } from "@/lib/demo-data";
 import useDocumentTitle from "@/hooks/use-document-title";
 import Navigation from "@/components/Navigation";
@@ -105,7 +105,7 @@ export default function Dashboard() {
             const message = JSON.parse(event.data);
             
             if (message.type === "iot_update") {
-              // Add new IoT data point and update KPI metrics in one operation
+              // Add new IoT data point and update KPI metrics in one state update
               setIotDataPoints((prev) => {
                 const updated = [...prev, message].slice(-100); // Keep only last 100 data points
                 
@@ -119,6 +119,7 @@ export default function Dashboard() {
                     salesValues.reduce((sum: number, val: number) => sum + Math.pow(val - avgSales, 2), 0) / salesValues.length
                   );
 
+                  // Update KPI metrics state immediately
                   setKpiMetrics({
                     avgWeeklySales: avgSales,
                     maxSales: maxSales,
@@ -127,14 +128,23 @@ export default function Dashboard() {
                     holidaySalesAvg: avgSales * 1.2 // Estimate
                   });
                 }
+                
                 return updated;
               });
 
-              // Invalidate queries to refresh dashboard
+              // Invalidate queries to refresh dashboard graphs (force immediate refetch)
               queryClient.invalidateQueries({ queryKey: ["kpi"] });
+              queryClient.invalidateQueries({ queryKey: ["forecast"] }); // Add forecast invalidation
               queryClient.invalidateQueries({ queryKey: ["alerts"] });
               queryClient.invalidateQueries({ queryKey: ["anomalies"] });
               queryClient.invalidateQueries({ queryKey: ["risk"] });
+              
+              // Force immediate refetch (bypass staleTime)
+              queryClient.refetchQueries({ queryKey: ["kpi"] });
+              queryClient.refetchQueries({ queryKey: ["forecast"] });
+              queryClient.refetchQueries({ queryKey: ["alerts"] });
+              queryClient.refetchQueries({ queryKey: ["anomalies"] });
+              queryClient.refetchQueries({ queryKey: ["risk"] });
             } else if (message.type === "alert") {
               // Add new alert
               setRealtimeAlerts((prev) => {
@@ -184,15 +194,79 @@ export default function Dashboard() {
   }, [dataLoaded, queryClient]);
 
   // Query backend for API-driven values (fallback to demo data in fetch functions)
-  const metricsQuery = useQuery({ queryKey: ["metrics"], queryFn: fetchMetrics, staleTime: 60_000 });
-  const inventoriesQuery = useQuery({ queryKey: ["inventories"], queryFn: fetchInventories, staleTime: 60_000 });
-  const forecastQuery = useQuery({ queryKey: ["forecast", forecastStoreFilter, forecastPeriods], queryFn: () => fetchForecast(forecastStoreFilter ? parseInt(forecastStoreFilter) : undefined, forecastPeriods), staleTime: 60_000 });
-  const recommendationsQuery = useQuery({ queryKey: ["recommendations"], queryFn: () => fetchRecommendations(), staleTime: 60_000 });
-  const kpiQuery = useQuery({ queryKey: ["kpi"], queryFn: () => fetchKPIMetrics(), staleTime: 60_000 });
-  const anomaliesQuery = useQuery({ queryKey: ["anomalies"], queryFn: () => fetchAnomalies(), staleTime: 60_000 });
-  // Note: riskQuery and alertsQuery require POST data, not used in initial render
-  // const riskQuery = useQuery({ queryKey: ["risk"], queryFn: () => fetchRiskAnalysis(), staleTime: 60_000 });
-  // const alertsQuery = useQuery({ queryKey: ["alerts"], queryFn: () => fetchAlerts(), staleTime: 60_000 });
+  // Reduced staleTime for real-time updates when using backend data (not CSV)
+  const staleTimeForRealtime = dataLoaded ? 60_000 : 5_000; // 5 seconds when using backend data, 60s for CSV
+  const metricsQuery = useQuery({ queryKey: ["metrics"], queryFn: fetchMetrics, staleTime: staleTimeForRealtime });
+  const inventoriesQuery = useQuery({ queryKey: ["inventories"], queryFn: fetchInventories, staleTime: staleTimeForRealtime });
+  const forecastQuery = useQuery({ 
+    queryKey: ["forecast", forecastStoreFilter, forecastPeriods], 
+    queryFn: () => fetchForecast(forecastStoreFilter ? parseInt(forecastStoreFilter) : undefined, forecastPeriods), 
+    staleTime: staleTimeForRealtime,
+    refetchInterval: dataLoaded ? false : 10_000 // Auto-refetch every 10s when using backend data
+  });
+  const recommendationsQuery = useQuery({ 
+    queryKey: ["recommendations"], 
+    queryFn: () => fetchRecommendations(), 
+    staleTime: staleTimeForRealtime 
+  });
+  const kpiQuery = useQuery({ 
+    queryKey: ["kpi"], 
+    queryFn: () => fetchKPIMetrics(), 
+    staleTime: staleTimeForRealtime,
+    refetchInterval: dataLoaded ? false : 10_000 // Auto-refetch every 10s when using backend data
+  });
+  const anomaliesQuery = useQuery({ 
+    queryKey: ["anomalies"], 
+    queryFn: () => fetchAnomalies(), 
+    staleTime: staleTimeForRealtime,
+    refetchInterval: dataLoaded ? false : 10_000 // Auto-refetch every 10s when using backend data
+  });
+  // Note: Risk and Alerts require POST data, so we skip these queries for now
+  // They are calculated on-demand when IoT data arrives via WebSocket
+  const riskQuery = useQuery({ 
+    queryKey: ["risk"], 
+    queryFn: () => Promise.resolve({ risk_score: 0, risk_level: "LOW", cluster: 0, anomaly: 1, anomaly_score: 0 }), 
+    staleTime: staleTimeForRealtime,
+    enabled: false // Disabled - risk is calculated per IoT data point
+  });
+  const alertsQuery = useQuery({ 
+    queryKey: ["alerts"], 
+    queryFn: () => Promise.resolve({ alerts: [], details: null }), 
+    staleTime: staleTimeForRealtime,
+    enabled: false // Disabled - alerts come from WebSocket
+  });
+  const accuracyQuery = useQuery({ 
+    queryKey: ["model-accuracy"], 
+    queryFn: () => fetchOverallAccuracy(), 
+    staleTime: 300_000, // Cache for 5 minutes (accuracy doesn't change often)
+    retry: 1, // Only retry once if it fails
+    refetchOnWindowFocus: false // Don't refetch when window regains focus
+  });
+  const backtestQuery = useQuery({ 
+    queryKey: ["backtest-comparison"], 
+    queryFn: () => {
+      console.log("[Dashboard] Fetching backtest comparison...");
+      return fetchBacktestComparison(undefined, 6); // 6 weeks for better accuracy
+    },
+    staleTime: 300_000, // Cache for 5 minutes
+    retry: 1,
+    refetchOnWindowFocus: false
+  });
+
+  // Debug logging for backtest query
+  useEffect(() => {
+    if (backtestQuery.data) {
+      console.log("[Dashboard] Backtest query success:", {
+        hasData: !!backtestQuery.data,
+        keys: Object.keys(backtestQuery.data),
+        hasComparison: "comparison" in backtestQuery.data,
+        comparisonLength: "comparison" in backtestQuery.data ? (backtestQuery.data as BacktestComparisonResult).comparison.length : 0
+      });
+    }
+    if (backtestQuery.error) {
+      console.error("[Dashboard] Backtest query error:", backtestQuery.error);
+    }
+  }, [backtestQuery.data, backtestQuery.error]);
 
   // Choose data to display: uploaded (local) when available; otherwise API/demo data
   const displayMetrics = metrics ?? metricsQuery.data ?? null;
@@ -294,21 +368,19 @@ export default function Dashboard() {
     };
   }
 
-  // Generate synthetic weekly forecast data (exact number of periods, no extra point)
-  function generateForecastDetails(productId: string, periods: number): ForecastDetail[] {
+  // Generate a small set of synthetic forecast data for a given product.
+  // This is a fallback used when the user hasn't uploaded real data yet.
+  function generateForecastDetails(productId: string, weeks: number): ForecastDetail[] {
     const today = new Date();
-    // Base around avg weekly sales
-    const base = 15000 + (Math.abs(productId?.length || 0) * 200);
-    return Array.from({ length: periods }).map((_, i) => {
+    const base = 30 + (productId?.length || 0);
+    // Generate weeks + 1 data points to show all week boundaries (start and end of each week)
+    return Array.from({ length: weeks + 1 }).map((_, i) => {
       const d = new Date(today);
-      d.setDate(today.getDate() - ((periods - i - 1) * 7));
-      // Seasonal pattern + weekly variance matching Walmart scale
-      const seasonalFactor = 1 + Math.sin(i / 8) * 0.15; // ±15% seasonal
-      const weeklyNoise = Math.sin(i / 3) * 1200 + (i % 4 === 0 ? 2500 : 0); // Holiday spikes
-      const historical = Math.max(0, Math.round(base * seasonalFactor + weeklyNoise));
-      const forecast = Math.round(historical * (1 + Math.cos(i / 5) * 0.05));
-      const lower = Math.round(forecast * 0.88);
-      const upper = Math.round(forecast * 1.12);
+      d.setDate(today.getDate() + (i * 7)); // Weekly intervals: 0, 7, 14, 21, etc.
+      const historical = Math.max(0, Math.round(base + Math.sin(i / 3) * 8 + (i % 7 === 0 ? 10 : 0)));
+      const forecast = Math.round(historical * (1 + Math.cos(i / 7) * 0.03));
+      const lower = Math.round(forecast * 0.9);
+      const upper = Math.round(forecast * 1.1);
       const anomaly = Math.random() > 0.985;
       return {
         productId,
@@ -369,82 +441,104 @@ export default function Dashboard() {
   return (
     <>
       <Navigation />
-      <main className="min-h-screen bg-gradient-to-b from-white to-slate-50 pb-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
+      <main className="min-h-screen pb-12 relative bg-background">
+        {/* Animated background grid */}
+        <div className="fixed inset-0 grid-pattern opacity-20 pointer-events-none"></div>
+        <div className="fixed inset-0 bg-gradient-to-b from-primary/5 via-transparent to-secondary/5 pointer-events-none"></div>
+        
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 relative z-10">
+          {/* Real-Time Status Indicator */}
+          {!dataLoaded && (
+            <div className="mb-6 p-4 glass-card flex items-center gap-3 neon-border smooth-transition">
+              <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500 animate-pulse pulse-glow' : 'bg-red-500'}`} />
+              <span className="text-sm font-medium text-foreground">
+                {wsConnected 
+                  ? `🟢 Real-Time Mode: Connected (${iotDataPoints.length} data points received)`
+                  : '🔴 Real-Time Mode: Connecting...'}
+              </span>
+              {wsConnected && iotDataPoints.length > 0 && (
+                <span className="text-xs text-foreground/60 ml-auto">
+                  Graphs update automatically as new data arrives
+                </span>
+              )}
+            </div>
+          )}
+          
           {/* KPI Overview Section - Backend Driven */}
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold mb-4">KPI Overview</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-              <Card className="p-6">
+          <section className="mb-12">
+            <h2 className="text-3xl sm:text-4xl font-bold mb-8 gradient-text font-heading">KPI Overview</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
+              <Card className="p-6 futuristic-card hover-lift">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-muted-foreground">Avg Weekly Sales</p>
-                    <p className="text-2xl font-bold mt-1">
+                    <p className="text-sm font-medium text-muted-foreground mb-1">Avg Weekly Sales</p>
+                    <p className="text-2xl font-semibold text-foreground">
                       ${displayKPIMetrics.avgWeeklySales.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </p>
                   </div>
-                  <TrendingUp className="h-8 w-8 text-blue-600" />
+                  <TrendingUp className="h-8 w-8 text-primary neon-glow" />
                 </div>
               </Card>
 
-              <Card className="p-6">
+              <Card className="p-6 futuristic-card hover-lift">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-muted-foreground">Max Sales</p>
-                    <p className="text-2xl font-bold mt-1">
+                    <p className="text-sm font-medium text-muted-foreground mb-1">Max Sales</p>
+                    <p className="text-2xl font-semibold text-foreground">
                       ${displayKPIMetrics.maxSales.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </p>
                   </div>
-                  <ArrowUp className="h-8 w-8 text-green-600" />
+                  <ArrowUp className="h-8 w-8 text-green-400 neon-glow-secondary" />
                 </div>
               </Card>
 
-              <Card className="p-6">
+              <Card className="p-6 futuristic-card hover-lift">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-muted-foreground">Min Sales</p>
-                    <p className="text-2xl font-bold mt-1">
+                    <p className="text-sm font-medium text-muted-foreground mb-1">Min Sales</p>
+                    <p className="text-2xl font-semibold text-foreground">
                       ${displayKPIMetrics.minSales.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </p>
                   </div>
-                  <ArrowDown className="h-8 w-8 text-orange-600" />
+                  <ArrowDown className="h-8 w-8 text-orange-400" />
                 </div>
               </Card>
 
-              <Card className="p-6">
+              <Card className="p-6 futuristic-card hover-lift">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-muted-foreground">Volatility</p>
-                    <p className="text-2xl font-bold mt-1">
+                    <p className="text-sm font-medium text-muted-foreground mb-1">Volatility</p>
+                    <p className="text-2xl font-semibold text-foreground">
                       ${displayKPIMetrics.volatility.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </p>
                   </div>
-                  <Activity className="h-8 w-8 text-purple-600" />
+                  <Activity className="h-8 w-8 text-secondary neon-glow-secondary" />
                 </div>
               </Card>
 
-              <Card className="p-6">
+              <Card className="p-6 futuristic-card hover-lift">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-muted-foreground">Holiday Sales Avg</p>
-                    <p className="text-2xl font-bold mt-1">
+                    <p className="text-sm font-medium text-muted-foreground mb-1">Holiday Sales Avg</p>
+                    <p className="text-2xl font-semibold text-foreground">
                       ${displayKPIMetrics.holidaySalesAvg.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </p>
                   </div>
-                  <Calendar className="h-8 w-8 text-red-600" />
+                  <Calendar className="h-8 w-8 text-red-400" />
                 </div>
               </Card>
             </div>
-          </div>
+          </section>
 
           {/* Forecast Section */}
-          <Card className="border-0 mb-8">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-primary" />
-                Sales Forecast
+          <section className="mb-12">
+            <Card className="futuristic-card">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-2xl sm:text-3xl font-heading">
+                <TrendingUp className="w-5 h-5 text-primary neon-glow" />
+                <span className="gradient-text">Sales Forecast</span>
               </CardTitle>
-              <p className="text-sm text-foreground/60 mt-2">
+                        <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
                 Predictive sales forecast for upcoming periods
               </p>
               <div className="flex items-center gap-6 mt-4">
@@ -455,7 +549,7 @@ export default function Dashboard() {
                   <select
                     value={forecastStoreFilter}
                     onChange={(e) => setForecastStoreFilter(e.target.value)}
-                    className="px-3 py-2 border border-border rounded-lg text-sm"
+                    className="px-3 py-2 border border-border/50 rounded-lg text-sm glass bg-card text-foreground"
                   >
                     <option value="">All Stores</option>
                     {Array.from(new Set(displayInventories.map(inv => inv.storeId))).map(storeId => (
@@ -481,29 +575,35 @@ export default function Dashboard() {
             <CardContent>
               <ResponsiveContainer width="100%" height={350}>
                 <LineChart
-                  data={displayForecast.slice(0, forecastPeriods)}
+                  data={displayForecast.slice(0, forecastPeriods + 1)}
                   margin={{ top: 5, right: 30, left: 0, bottom: 5 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.1)" />
                   <XAxis
                     dataKey="date"
-                    stroke="#9ca3af"
-                    tick={{ fontSize: 12 }}
+                    stroke="rgba(255, 255, 255, 0.6)"
+                    tick={{ fontSize: 12, fill: "rgba(255, 255, 255, 0.8)" }}
                   />
-                  <YAxis stroke="#9ca3af" />
+                  <YAxis 
+                    stroke="rgba(255, 255, 255, 0.6)"
+                    tick={{ fill: "rgba(255, 255, 255, 0.8)" }}
+                  />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: "#fff",
-                      border: "1px solid #e5e7eb",
+                      backgroundColor: "rgba(34, 39, 46, 0.95)",
+                      border: "1px solid rgba(255, 255, 255, 0.2)",
                       borderRadius: "0.5rem",
+                      color: "rgba(255, 255, 255, 0.9)",
                     }}
                     formatter={(value) => Math.round(value as number)}
                   />
-                  <Legend />
+                  <Legend 
+                    wrapperStyle={{ color: "rgba(255, 255, 255, 0.9)" }}
+                  />
                   <Line
                     type="monotone"
                     dataKey="forecast"
-                    stroke="#2563eb"
+                    stroke="#3b82f6"
                     strokeWidth={2}
                     name="Forecast"
                     dot={{ r: 3 }}
@@ -530,15 +630,17 @@ export default function Dashboard() {
               </ResponsiveContainer>
             </CardContent>
           </Card>
+          </section>
 
           {/* Anomaly Detection */}
-          <Card className="border-0 mb-8">
+          <section className="mb-12">
+            <Card className="futuristic-card">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-primary" />
-                Anomaly Detection
+              <CardTitle className="flex items-center gap-2 text-2xl sm:text-3xl font-heading">
+                <AlertTriangle className="w-5 h-5 text-secondary neon-glow-secondary" />
+                <span className="gradient-text">Anomaly Detection</span>
               </CardTitle>
-              <p className="text-sm text-foreground/60 mt-2">
+                        <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
                 Identify outliers and unusual patterns before they escalate
               </p>
               </CardHeader>
@@ -560,22 +662,28 @@ export default function Dashboard() {
                       <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.1)" />
                   <XAxis
                     dataKey="date"
-                    stroke="#9ca3af"
-                    tick={{ fontSize: 12 }}
+                    stroke="rgba(255, 255, 255, 0.6)"
+                    tick={{ fontSize: 12, fill: "rgba(255, 255, 255, 0.8)" }}
                   />
-                  <YAxis stroke="#9ca3af" />
+                  <YAxis 
+                    stroke="rgba(255, 255, 255, 0.6)"
+                    tick={{ fill: "rgba(255, 255, 255, 0.8)" }}
+                  />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: "#fff",
-                      border: "1px solid #e5e7eb",
+                      backgroundColor: "rgba(34, 39, 46, 0.95)",
+                      border: "1px solid rgba(255, 255, 255, 0.2)",
                       borderRadius: "0.5rem",
+                      color: "rgba(255, 255, 255, 0.9)",
                     }}
                     formatter={(value) => Math.round(value as number)}
                   />
-                  <Legend />
+                  <Legend 
+                    wrapperStyle={{ color: "rgba(255, 255, 255, 0.9)" }}
+                  />
                   <Area
                     type="monotone"
                     dataKey="lowerInterval"
@@ -592,7 +700,7 @@ export default function Dashboard() {
                     <Line
                     type="monotone"
                     dataKey="historicalSales"
-                    stroke="#000"
+                    stroke="#ffffff"
                     strokeWidth={2}
                     name="Historical Sales"
                     dot={false}
@@ -622,7 +730,7 @@ export default function Dashboard() {
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                   <div className="flex items-center gap-2">
                     <select
-                      className="px-3 py-2 border border-border rounded"
+                      className="px-3 py-2 border border-border/50 rounded-lg text-sm glass bg-card/50 text-foreground"
                       value={storeFilter}
                       onChange={(e) => setStoreFilter(e.target.value)}
                     >
@@ -634,7 +742,7 @@ export default function Dashboard() {
                       ))}
                     </select>
                     <select
-                      className="px-3 py-2 border border-border rounded"
+                      className="px-3 py-2 border border-border/50 rounded-lg text-sm glass bg-card/50 text-foreground"
                       value={deptFilter}
                       onChange={(e) => setDeptFilter(e.target.value)}
                     >
@@ -643,20 +751,30 @@ export default function Dashboard() {
                         <option key={c} value={c}>{c}</option>
                       ))}
                     </select>
-                    <input type="date" className="px-3 py-2 border border-border rounded" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-                    <input type="date" className="px-3 py-2 border border-border rounded" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+                    <input 
+                      type="date" 
+                      className="px-3 py-2 border border-border/50 rounded-lg text-sm glass bg-card/50 text-foreground" 
+                      value={dateFrom} 
+                      onChange={(e) => setDateFrom(e.target.value)} 
+                    />
+                    <input 
+                      type="date" 
+                      className="px-3 py-2 border border-border/50 rounded-lg text-sm glass bg-card/50 text-foreground" 
+                      value={dateTo} 
+                      onChange={(e) => setDateTo(e.target.value)} 
+                    />
                   </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border-collapse">
                     <thead>
-                      <tr className="border-b border-border">
-                        <th className="text-left py-3 px-4 font-semibold">Date</th>
-                        <th className="text-left py-3 px-4 font-semibold">Store</th>
-                        <th className="text-left py-3 px-4 font-semibold">Dept</th>
-                        <th className="text-right py-3 px-4 font-semibold">Weekly Sales</th>
-                        <th className="text-center py-3 px-4 font-semibold">Anomaly</th>
-                        <th className="text-right py-3 px-4 font-semibold">Anomaly Score</th>
+                      <tr className="border-b border-border/50">
+                        <th className="text-left py-3 px-4 font-semibold text-foreground">Date</th>
+                        <th className="text-left py-3 px-4 font-semibold text-foreground">Store</th>
+                        <th className="text-left py-3 px-4 font-semibold text-foreground">Dept</th>
+                        <th className="text-right py-3 px-4 font-semibold text-foreground">Weekly Sales</th>
+                        <th className="text-center py-3 px-4 font-semibold text-foreground">Anomaly</th>
+                        <th className="text-right py-3 px-4 font-semibold text-foreground">Anomaly Score</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -675,17 +793,17 @@ export default function Dashboard() {
                           const anomalyScore = Math.round((Math.abs(d.historicalSales - d.forecast) / Math.max(1, d.historicalSales)) * 100) / 100;
                           
                           return (
-                            <tr key={d.productId + d.date} className="border-b border-border">
-                              <td className="py-3 px-4">{d.date}</td>
-                              <td className="py-3 px-4">{displayInventories.find((i) => i.productId === d.productId)?.storeId ?? "-"}</td>
-                              <td className="py-3 px-4">{displayInventories.find((i) => i.productId === d.productId)?.category ?? "-"}</td>
-                              <td className="py-3 px-4 text-right font-mono">{d.historicalSales}</td>
+                            <tr key={d.productId + d.date} className="border-b border-border/50 hover:bg-primary/5 transition-colors">
+                              <td className="py-3 px-4 text-foreground">{d.date}</td>
+                              <td className="py-3 px-4 text-foreground">{displayInventories.find((i) => i.productId === d.productId)?.storeId ?? "-"}</td>
+                              <td className="py-3 px-4 text-foreground">{displayInventories.find((i) => i.productId === d.productId)?.category ?? "-"}</td>
+                              <td className="py-3 px-4 text-right font-mono text-foreground">{d.historicalSales}</td>
                               <td className="py-3 px-4 text-center">
-                                <span className={`font-semibold ${anomaly === -1 ? 'text-red-600' : 'text-green-600'}`}>
+                                <span className={`font-semibold ${anomaly === -1 ? 'text-red-400' : 'text-green-400'}`}>
                                   {anomaly === -1 ? '-1' : '0'}
                                 </span>
                               </td>
-                              <td className="py-3 px-4 text-right font-mono">{anomalyScore.toFixed(2)}</td>
+                              <td className="py-3 px-4 text-right font-mono text-foreground">{anomalyScore.toFixed(2)}</td>
                             </tr>
                           );
                         })}
@@ -694,8 +812,8 @@ export default function Dashboard() {
                 </div>
               </div>
               {selectedData.filter((d) => d.anomalyFlag).length > 0 && (
-                <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-sm font-semibold text-yellow-900 mb-2">
+                <div className="mt-6 p-4 bg-yellow-500/20 border border-yellow-500/30 rounded-lg glass-card">
+                  <p className="text-sm font-semibold text-yellow-400 mb-2">
                     ⚠️ Anomalies Detected
                   </p>
                   <ul className="space-y-1">
@@ -703,7 +821,7 @@ export default function Dashboard() {
                       .filter((d) => d.anomalyFlag && d.anomalyReason)
                       .slice(0, 3)
                       .map((record, idx) => (
-                        <li key={idx} className="text-xs text-yellow-800">
+                        <li key={idx} className="text-xs text-yellow-300">
                           {record.date}: {record.anomalyReason}
                         </li>
                       ))}
@@ -712,15 +830,17 @@ export default function Dashboard() {
               )}
             </CardContent>
           </Card>
+          </section>
 
           {/* Risk Analysis Dashboard */}
-          <Card className="border-0 mb-8">
+          <section className="mb-12">
+            <Card className="futuristic-card">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-red-600" />
-                Risk Analysis
+              <CardTitle className="flex items-center gap-2 text-2xl sm:text-3xl font-heading">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
+                <span className="gradient-text">Risk Analysis</span>
               </CardTitle>
-              <p className="text-sm text-foreground/60 mt-2">
+                        <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
                 Scored by anomaly detection, cluster analysis, and risk factors
               </p>
             </CardHeader>
@@ -728,13 +848,13 @@ export default function Dashboard() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm border-collapse">
                   <thead>
-                    <tr className="border-b border-border">
-                      <th className="text-left py-3 px-4 font-semibold">Store</th>
-                      <th className="text-center py-3 px-4 font-semibold">Risk Score</th>
-                      <th className="text-center py-3 px-4 font-semibold">Risk Level</th>
-                      <th className="text-center py-3 px-4 font-semibold">Cluster</th>
-                      <th className="text-center py-3 px-4 font-semibold">Anomaly</th>
-                      <th className="text-right py-3 px-4 font-semibold">Days to Stockout</th>
+                    <tr className="border-b border-border/50">
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">Store</th>
+                      <th className="text-center py-3 px-4 font-semibold text-foreground">Risk Score</th>
+                      <th className="text-center py-3 px-4 font-semibold text-foreground">Risk Level</th>
+                      <th className="text-center py-3 px-4 font-semibold text-foreground">Cluster</th>
+                      <th className="text-center py-3 px-4 font-semibold text-foreground">Anomaly</th>
+                      <th className="text-right py-3 px-4 font-semibold text-foreground">Days to Stockout</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -759,33 +879,33 @@ export default function Dashboard() {
                       .sort((a, b) => b.riskScore - a.riskScore)
                       .slice(0, 10)
                       .map((item) => (
-                        <tr key={item.productId} className="border-b border-border hover:bg-slate-50 transition-colors">
-                          <td className="py-3 px-4">{item.storeId}</td>
+                        <tr key={item.productId} className="border-b border-border/50 hover:bg-primary/5 transition-colors">
+                          <td className="py-3 px-4 text-foreground">{item.storeId}</td>
                           <td className="py-3 px-4 text-center">
-                            <span className="font-mono font-bold">{item.riskScore}</span>
+                            <span className="font-mono font-bold text-foreground">{item.riskScore}</span>
                           </td>
                           <td className="py-3 px-4 text-center">
                             <span
                               className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
                                 item.computedRiskLevel === "HIGH"
-                                  ? "bg-red-100 text-red-800"
+                                  ? "bg-red-500/20 text-red-400 border border-red-500/30"
                                   : item.computedRiskLevel === "MEDIUM"
-                                    ? "bg-yellow-100 text-yellow-800"
-                                    : "bg-green-100 text-green-800"
+                                    ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
+                                    : "bg-green-500/20 text-green-400 border border-green-500/30"
                               }`}
                             >
                               {item.computedRiskLevel}
                             </span>
                           </td>
-                          <td className="py-3 px-4 text-center font-mono">{item.clusterId}</td>
+                          <td className="py-3 px-4 text-center font-mono text-foreground">{item.clusterId}</td>
                           <td className="py-3 px-4 text-center">
                             {item.anomalyFlag === -1 ? (
-                              <span className="text-red-600 font-semibold">⚠️ Yes</span>
+                              <span className="text-red-400 font-semibold">⚠️ Yes</span>
                             ) : (
-                              <span className="text-green-600">✓ No</span>
+                              <span className="text-green-400">✓ No</span>
                             )}
                           </td>
-                          <td className="py-3 px-4 text-right font-mono">{item.daysUntilStockout}d</td>
+                          <td className="py-3 px-4 text-right font-mono text-foreground">{item.daysUntilStockout}d</td>
                         </tr>
                       ))}
                   </tbody>
@@ -793,19 +913,21 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
+          </section>
 
           {/* Real-Time Alerts & Anomalies */}
-          <Card className="border-0 mb-8">
+          <section className="mb-12">
+            <Card className="futuristic-card">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-orange-500" />
-                Real-Time Alerts {!dataLoaded && iotDataPoints.length > 0 && (
+              <CardTitle className="flex items-center gap-2 text-2xl sm:text-3xl font-heading">
+                <Zap className="w-5 h-5 text-accent neon-glow" />
+                <span className="gradient-text">Real-Time Alerts</span> {!dataLoaded && iotDataPoints.length > 0 && (
                   <span className="text-sm font-normal text-muted-foreground">
                     ({iotDataPoints.length} IoT updates)
                   </span>
                 )}
               </CardTitle>
-              <p className="text-sm text-foreground/60 mt-2">
+                        <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
                 {!dataLoaded 
                   ? "Live IoT data stream - Updates appear automatically as data arrives"
                   : "Instant notifications to keep you ahead of critical events"
@@ -819,19 +941,19 @@ export default function Dashboard() {
                   {realtimeAlerts.map((alert: any) => (
                     <div
                       key={alert.id}
-                      className="p-4 border-2 border-red-200 bg-red-50 rounded-lg"
+                      className="p-4 border-2 border-red-500/30 bg-red-500/20 rounded-lg glass-card"
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <p className="font-semibold text-red-900">{alert.message}</p>
-                          <p className="text-xs text-red-700 mt-1">
+                          <p className="font-semibold text-red-400">{alert.message}</p>
+                          <p className="text-xs text-red-300 mt-1">
                             Store: {alert.store} | Dept: {alert.dept} | Risk Score: {alert.risk_score}
                           </p>
-                          <p className="text-xs text-red-600 mt-1">
+                          <p className="text-xs text-red-400/80 mt-1">
                             {new Date(alert.timestamp).toLocaleString()}
                           </p>
                         </div>
-                        <span className="text-xs font-semibold px-3 py-1 bg-red-200 text-red-800 rounded-full">
+                        <span className="text-xs font-semibold px-3 py-1 bg-red-500/30 text-red-300 border border-red-500/50 rounded-full">
                           HIGH RISK
                         </span>
                       </div>
@@ -842,18 +964,18 @@ export default function Dashboard() {
 
               {/* Show latest IoT data points */}
               {!dataLoaded && iotDataPoints.length > 0 && (
-                <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-sm font-semibold text-blue-900 mb-2">
+                <div className="mb-6 p-4 bg-blue-500/20 border border-blue-500/30 rounded-lg glass-card">
+                  <p className="text-sm font-semibold text-blue-400 mb-2">
                     📊 Latest IoT Data Points
                   </p>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     {iotDataPoints.slice(-4).reverse().map((point: any, idx: number) => (
-                      <div key={idx} className="bg-white p-2 rounded border">
-                        <p className="font-semibold">Store {point.data?.store}</p>
-                        <p className="text-xs text-muted-foreground">
+                      <div key={idx} className="glass-card p-3 rounded-lg border border-border/50">
+                        <p className="font-semibold text-foreground">Store {point.data?.store}</p>
+                        <p className="text-xs text-foreground/70 mt-1">
                           Sales: ${point.data?.weekly_sales?.toFixed(2)}
                         </p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-xs text-foreground/70">
                           Risk: {point.analysis?.risk_level}
                         </p>
                       </div>
@@ -901,7 +1023,7 @@ export default function Dashboard() {
                   .map((item) => (
                     <div
                       key={item.productId}
-                      className="p-4 border border-border rounded-lg hover:bg-slate-50 transition-colors"
+                      className="p-4 border border-border/50 rounded-lg glass-card hover:bg-primary/5 transition-colors"
                     >
                       <div className="flex items-start justify-between mb-3">
                         <div className="flex-1">
@@ -912,15 +1034,15 @@ export default function Dashboard() {
                             Store: {item.storeId} | Cluster: {item.clusterId} | Risk Level: {item.level}
                           </p>
                         </div>
-                        <span
-                          className={`text-xs font-semibold px-3 py-1 rounded-full whitespace-nowrap ml-4 ${
-                            item.level === "HIGH"
-                              ? "bg-red-100 text-red-800"
-                              : item.level === "MEDIUM"
-                                ? "bg-yellow-100 text-yellow-800"
-                                : "bg-green-100 text-green-800"
-                          }`}
-                        >
+                         <span
+                           className={`text-xs font-semibold px-3 py-1 rounded-full whitespace-nowrap ml-4 border ${
+                             item.level === "HIGH"
+                               ? "bg-red-500/20 text-red-400 border-red-500/30"
+                               : item.level === "MEDIUM"
+                                 ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                                 : "bg-green-500/20 text-green-400 border-green-500/30"
+                           }`}
+                         >
                           {item.level}
                         </span>
                       </div>
@@ -936,15 +1058,382 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
+          </section>
+
+          {/* Model Accuracy Section */}
+          <section className="mb-12">
+            <Card className="futuristic-card">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-2xl sm:text-3xl font-heading">
+                <BarChart3 className="w-5 h-5 text-primary neon-glow" />
+                <span className="gradient-text">Model Accuracy & Performance</span>
+              </CardTitle>
+                        <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
+                Comparison of our trained model predictions vs actual Walmart sales data (3-month backtest)
+              </p>
+            </CardHeader>
+            <CardContent>
+              {accuracyQuery.isLoading || !accuracyQuery.data ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+                  <span className="ml-3 text-muted-foreground">Calculating accuracy metrics...</span>
+                </div>
+              ) : accuracyQuery.error ? (
+                <div className="p-4 bg-red-500/20 border border-red-500/30 rounded-lg glass-card">
+                  <p className="text-sm text-red-400">
+                    Failed to load accuracy metrics. Please try again later.
+                  </p>
+                </div>
+              ) : accuracyQuery.data ? (
+                <div className="space-y-6">
+                  {/* Overall Confidence Score */}
+                  <div className="p-6 bg-gradient-to-r from-primary/20 via-accent/20 to-secondary/20 rounded-lg border border-primary/30 glass-card">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <p className="text-sm font-medium text-foreground mb-1">Overall Model Confidence</p>
+                        <p className="text-3xl font-bold gradient-text">
+                          {accuracyQuery.data.overall_confidence.toFixed(1)}%
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-foreground/80 mb-1">Forecast: {accuracyQuery.data.forecast_confidence.toFixed(1)}%</p>
+                        <p className="text-xs text-foreground/80">Anomaly: {accuracyQuery.data.anomaly_confidence.toFixed(1)}%</p>
+                      </div>
+                    </div>
+                    <div className="w-full bg-primary/20 rounded-full h-3">
+                      <div 
+                        className="bg-gradient-to-r from-primary to-secondary h-3 rounded-full transition-all duration-500"
+                        style={{ width: `${accuracyQuery.data.overall_confidence}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Forecast Accuracy Metrics */}
+                  <div>
+                    <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4" />
+                      Forecast Model Accuracy
+                    </h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="p-4 glass-card border border-border/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">MAE</p>
+                        <p className="text-xl font-bold text-foreground">
+                          {accuracyQuery.data.forecast_metrics.mae.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">Mean Absolute Error</p>
+                      </div>
+                      <div className="p-4 glass-card border border-border/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">RMSE</p>
+                        <p className="text-xl font-bold text-foreground">
+                          {accuracyQuery.data.forecast_metrics.rmse.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">Root Mean Squared Error</p>
+                      </div>
+                      <div className="p-4 glass-card border border-border/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">MAPE</p>
+                        <p className="text-xl font-bold text-foreground">
+                          {accuracyQuery.data.forecast_metrics.mape.toFixed(2)}%
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">Mean Absolute % Error</p>
+                      </div>
+                      {accuracyQuery.data.forecast_metrics.coverage && (
+                        <div className="p-4 glass-card border border-border/50 rounded-lg">
+                          <p className="text-xs text-muted-foreground mb-1">Coverage</p>
+                          <p className="text-xl font-bold text-foreground">
+                            {(accuracyQuery.data.forecast_metrics.coverage * 100).toFixed(1)}%
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">Prediction Interval</p>
+                        </div>
+                      )}
+                    </div>
+                    {accuracyQuery.data.forecast_metrics.stores_evaluated && (
+                      <p className="text-xs text-muted-foreground mt-3">
+                        Evaluated across {accuracyQuery.data.forecast_metrics.stores_evaluated} stores
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Anomaly Detection Metrics */}
+                  <div>
+                    <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4" />
+                      Anomaly Detection Performance
+                    </h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="p-4 glass-card border border-border/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">Detection Rate</p>
+                        <p className="text-xl font-bold text-foreground">
+                          {(accuracyQuery.data.anomaly_metrics.anomaly_detection_rate * 100).toFixed(1)}%
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {accuracyQuery.data.anomaly_metrics.anomalies_detected} anomalies found
+                        </p>
+                      </div>
+                      <div className="p-4 glass-card border border-border/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">Normal Rate</p>
+                        <p className="text-xl font-bold text-foreground">
+                          {(accuracyQuery.data.anomaly_metrics.normal_detection_rate * 100).toFixed(1)}%
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {accuracyQuery.data.anomaly_metrics.normal_samples} normal samples
+                        </p>
+                      </div>
+                      <div className="p-4 glass-card border border-border/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">Total Samples</p>
+                        <p className="text-xl font-bold text-foreground">
+                          {accuracyQuery.data.anomaly_metrics.total_samples}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">Evaluated</p>
+                      </div>
+                      <div className="p-4 glass-card border border-border/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">Score Std Dev</p>
+                        <p className="text-xl font-bold text-foreground">
+                          {accuracyQuery.data.anomaly_metrics.score_std.toFixed(3)}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">Confidence spread</p>
+                      </div>
+                    </div>
+                    {accuracyQuery.data.anomaly_metrics.note && (
+                      <p className="text-xs text-muted-foreground mt-3 italic">
+                        {accuracyQuery.data.anomaly_metrics.note}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Predicted vs Actual Comparison Graph */}
+                  <div className="mt-8">
+                    <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4" />
+                      Predicted vs Actual Sales Comparison (6-Week Backtest)
+                    </h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      This graph demonstrates how accurately our model predicts actual Walmart sales. 
+                      The closer the predicted line (purple) matches the actual line (green), the better our model performs.
+                    </p>
+                    
+                    {backtestQuery.data && "comparison" in backtestQuery.data && (backtestQuery.data as BacktestComparisonResult).comparison.length > 0 ? (
+                      <div>
+                        <ResponsiveContainer width="100%" height={400}>
+                          <ComposedChart data={(backtestQuery.data as BacktestComparisonResult).comparison}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.1)" />
+                            <XAxis 
+                              dataKey="date" 
+                              stroke="rgba(255, 255, 255, 0.6)"
+                              tick={{ fontSize: 12, fill: "rgba(255, 255, 255, 0.8)" }}
+                              angle={-45}
+                              textAnchor="end"
+                              height={80}
+                            />
+                            <YAxis 
+                              stroke="rgba(255, 255, 255, 0.6)"
+                              tick={{ fill: "rgba(255, 255, 255, 0.8)" }}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "rgba(34, 39, 46, 0.95)",
+                                border: "1px solid rgba(255, 255, 255, 0.2)",
+                                borderRadius: "0.5rem",
+                                color: "rgba(255, 255, 255, 0.9)",
+                              } as React.CSSProperties}
+                            />
+                            <Legend 
+                              wrapperStyle={{ color: "rgba(255, 255, 255, 0.9)" }}
+                            />
+                            {(backtestQuery.data as BacktestComparisonResult).comparison[0]?.forecast_lower && (
+                              <>
+                                <Area
+                                  type="monotone"
+                                  dataKey="forecast_lower"
+                                  stroke="none"
+                                  fill="#93c5fd"
+                                  fillOpacity={0.2}
+                                  name="Forecast Interval (Lower)"
+                                />
+                                <Area
+                                  type="monotone"
+                                  dataKey="forecast_upper"
+                                  stroke="none"
+                                  fill="#93c5fd"
+                                  fillOpacity={0.2}
+                                  name="Forecast Interval (Upper)"
+                                />
+                              </>
+                            )}
+                            <Line
+                              type="monotone"
+                              dataKey="actual"
+                              stroke="#10b981"
+                              strokeWidth={3}
+                              name="Actual Sales (Walmart Data)"
+                              dot={{ r: 4 }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="forecast"
+                              stroke="#8b5cf6"
+                              strokeWidth={2.5}
+                              strokeDasharray="5 5"
+                              name="Predicted Sales (Our Model)"
+                              dot={{ r: 3 }}
+                            />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                        <div className="mt-4 p-3 bg-blue-500/20 border border-blue-500/30 rounded-lg glass-card">
+                          <p className="text-xs text-blue-400">
+                            <strong>Store {(backtestQuery.data as BacktestComparisonResult).store_id} Backtest Results:</strong> 
+                            {" "}MAE: {(backtestQuery.data as BacktestComparisonResult).metrics.mae.toFixed(2)} | 
+                            {" "}RMSE: {(backtestQuery.data as BacktestComparisonResult).metrics.rmse.toFixed(2)} | 
+                            {" "}MAPE: {(backtestQuery.data as BacktestComparisonResult).metrics.mape.toFixed(2)}%
+                          </p>
+                          <p className="text-xs text-blue-300 mt-1">
+                            This comparison uses the last 6 weeks of historical data to validate our model's accuracy.
+                          </p>
+                        </div>
+                      </div>
+                    ) : backtestQuery.data && "stores_evaluated" in backtestQuery.data && (backtestQuery.data as any).store_results && (backtestQuery.data as any).store_results.length > 0 ? (
+                      <div>
+                        <ResponsiveContainer width="100%" height={400}>
+                          <ComposedChart data={(backtestQuery.data as any).store_results[0].comparison}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.1)" />
+                            <XAxis 
+                              dataKey="date" 
+                              stroke="rgba(255, 255, 255, 0.6)"
+                              tick={{ fontSize: 12, fill: "rgba(255, 255, 255, 0.8)" }}
+                              angle={-45}
+                              textAnchor="end"
+                              height={80}
+                            />
+                            <YAxis 
+                              stroke="rgba(255, 255, 255, 0.6)"
+                              tick={{ fill: "rgba(255, 255, 255, 0.8)" }}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "rgba(34, 39, 46, 0.95)",
+                                border: "1px solid rgba(255, 255, 255, 0.2)",
+                                borderRadius: "0.5rem",
+                                color: "rgba(255, 255, 255, 0.9)",
+                              } as React.CSSProperties}
+                            />
+                            <Legend 
+                              wrapperStyle={{ color: "rgba(255, 255, 255, 0.9)" }}
+                            />
+                            <Area
+                              type="monotone"
+                              dataKey="forecast_lower"
+                              stroke="none"
+                              fill="#93c5fd"
+                              fillOpacity={0.2}
+                              name="Forecast Interval (Lower)"
+                            />
+                            <Area
+                              type="monotone"
+                              dataKey="forecast_upper"
+                              stroke="none"
+                              fill="#93c5fd"
+                              fillOpacity={0.2}
+                              name="Forecast Interval (Upper)"
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="actual"
+                              stroke="#10b981"
+                              strokeWidth={3}
+                              name="Actual Sales (Walmart Data)"
+                              dot={{ r: 4 }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="forecast"
+                              stroke="#8b5cf6"
+                              strokeWidth={2.5}
+                              strokeDasharray="5 5"
+                              name="Predicted Sales (Our Model)"
+                              dot={{ r: 3 }}
+                            />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                        <div className="mt-4 p-3 bg-blue-500/20 border border-blue-500/30 rounded-lg glass-card">
+                          <p className="text-xs text-blue-400">
+                            <strong>Store {(backtestQuery.data as any).store_results[0].store_id} Backtest Results:</strong> 
+                            {" "}MAE: {(backtestQuery.data as any).store_results[0].metrics.mae.toFixed(2)} | 
+                            {" "}RMSE: {(backtestQuery.data as any).store_results[0].metrics.rmse.toFixed(2)} | 
+                            {" "}MAPE: {(backtestQuery.data as any).store_results[0].metrics.mape.toFixed(2)}%
+                          </p>
+                          <p className="text-xs text-blue-300 mt-1">
+                            This comparison uses the last 6 weeks of historical data to validate our model's accuracy.
+                            {(backtestQuery.data as any).stores_evaluated > 1 && ` (Showing 1 of ${(backtestQuery.data as any).stores_evaluated} stores evaluated)`}
+                          </p>
+                        </div>
+                      </div>
+                    ) : backtestQuery.isLoading ? (
+                      <div className="p-4 bg-blue-500/20 border border-blue-500/30 rounded-lg glass-card">
+                        <div className="flex items-center gap-3">
+                          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+                          <div>
+                            <p className="text-sm font-medium text-blue-400">
+                              Generating comparison graph...
+                            </p>
+                            <p className="text-xs text-blue-300 mt-1">
+                              This may take 30-60 seconds (training Prophet model on Walmart data)
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : backtestQuery.error ? (
+                      <div className="p-4 bg-yellow-500/20 border border-yellow-500/30 rounded-lg glass-card">
+                        <p className="text-sm font-medium text-yellow-400 mb-2">
+                          ⚠️ Backtest comparison unavailable
+                        </p>
+                        <p className="text-xs text-yellow-300">
+                          Error: {backtestQuery.error instanceof Error ? backtestQuery.error.message : 'Unknown error'}
+                        </p>
+                        <p className="text-xs text-yellow-400/80 mt-2">
+                          Check backend logs for details. Ensure Walmart_Sales.csv has sufficient data (at least 32 weeks).
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="p-4 glass-card border border-border/50 rounded-lg">
+                        <p className="text-sm text-foreground/80 mb-2">
+                          Comparison graph will be displayed here once backtest data is available.
+                        </p>
+                        <p className="text-xs text-foreground/60">
+                          Debug: isLoading={backtestQuery.isLoading ? 'true' : 'false'}, 
+                          hasError={backtestQuery.error ? 'true' : 'false'}, 
+                          hasData={backtestQuery.data ? 'true' : 'false'}
+                          {backtestQuery.data && ` | Keys: ${Object.keys(backtestQuery.data).join(', ')}`}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Evaluation Info */}
+                  <div className="pt-4 border-t border-border/50">
+                    <p className="text-xs text-muted-foreground">
+                      Last evaluated: {new Date(accuracyQuery.data.evaluation_date).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 glass-card border border-border/50 rounded-lg">
+                  <p className="text-sm text-foreground/80">
+                    Accuracy metrics will be displayed here once evaluation is complete.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          </section>
 
           {/* Recommendations */}
-          <Card className="border-0 mb-8">
+          <section className="mb-12">
+            <Card className="futuristic-card">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CheckCircle className="w-5 h-5 text-green-600" />
-                Recommendations
+              <CardTitle className="flex items-center gap-2 text-2xl sm:text-3xl font-heading">
+                <CheckCircle className="w-5 h-5 text-green-400" />
+                <span className="gradient-text">Recommendations</span>
               </CardTitle>
-              <p className="text-sm text-foreground/60 mt-2">
+                        <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
                 Actionable insights to guide smarter decisions
               </p>
             </CardHeader>
@@ -952,28 +1441,36 @@ export default function Dashboard() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm border-collapse">
                   <thead>
-                    <tr className="border-b border-border">
-                      <th className="text-left py-3 px-4 font-semibold">Optimization Action</th>
-                      <th className="text-left py-3 px-4 font-semibold">Reason</th>
-                      <th className="text-left py-3 px-4 font-semibold">Store</th>
-                      <th className="text-left py-3 px-4 font-semibold">Date</th>
+                    <tr className="border-b border-border/50">
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">Optimization Action</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">Reason</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">Store</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">Date</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {(recommendationsQuery.data || []).map((rec: any, index: number) => (
-                      <tr key={`rec-${index}-${rec.storeId}`} className="border-b border-border hover:bg-slate-50 transition-colors">
-                        <td className="py-3 px-4 font-semibold">{rec.title}</td>
-                        <td className="py-3 px-4 text-foreground/60">{rec.details}</td>
-                        <td className="py-3 px-4">{rec.storeId ?? "-"}</td>
-                        <td className="py-3 px-4">{rec.date ?? "-"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
+                   <tbody>
+                     {Array.isArray(recommendationsQuery.data) && recommendationsQuery.data.length > 0 ? (
+                       recommendationsQuery.data.map((rec: any) => (
+                         <tr key={rec.id || rec.title} className="border-b border-border/50 hover:bg-primary/5 transition-colors">
+                           <td className="py-3 px-4 font-semibold text-foreground">{rec.title}</td>
+                           <td className="py-3 px-4 text-foreground/70">{rec.details}</td>
+                           <td className="py-3 px-4 text-foreground">{rec.storeId ?? "-"}</td>
+                           <td className="py-3 px-4 text-foreground">{rec.date ?? "-"}</td>
+                         </tr>
+                       ))
+                     ) : (
+                       <tr>
+                         <td colSpan={4} className="py-8 text-center text-muted-foreground">
+                           No recommendations available
+                         </td>
+                       </tr>
+                     )}
+                   </tbody>
                 </table>
               </div>
-            
             </CardContent>
           </Card>
+          </section>
         </div>
       </main>
     </>

@@ -171,3 +171,5 @@ IoT Simulator → Backend /api/v1/iot → WebSocket Broadcast → Dashboard Upda
 No manual refresh, no polling - everything updates instantly as IoT data arrives! 🚀
 
 
+
+

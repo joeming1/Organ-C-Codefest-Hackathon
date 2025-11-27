@@ -13,19 +13,7 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
-// Configure React Query with memory-optimized settings
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      // Reduce cache time to prevent memory buildup
-      gcTime: 5 * 60 * 1000, // 5 minutes (formerly cacheTime)
-      staleTime: 60 * 1000, // 1 minute
-      // Limit retries to reduce memory usage
-      retry: 2,
-      refetchOnWindowFocus: false, // Prevent unnecessary refetches
-    },
-  },
-});
+const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

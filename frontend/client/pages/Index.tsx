@@ -17,21 +17,21 @@ export default function Index() {
   return (
     <>
       <Navigation />
-      <main>
+      <main className="min-h-screen bg-background">
         {/* Hero Section */}
         <section className="pt-20 pb-32 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
           <div className="grid md:grid-cols-2 gap-12 items-center">
             <div>
-              <div className="inline-block mb-4 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20">
+              <div className="inline-block mb-4 px-4 py-1.5 rounded-full glass border border-primary/30 neon-border">
                 <span className="text-sm font-medium text-primary">
                   🚀 Powered by AI & Advanced Analytics
                 </span>
               </div>
-              <h1 className="text-5xl sm:text-6xl font-bold mb-6 text-foreground">
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold mb-6 text-foreground font-heading">
                 Intelligent{" "}
                 <span className="gradient-text">Inventory Optimization</span>
               </h1>
-              <p className="text-lg text-foreground/70 mb-8 leading-relaxed">
+              <p className="text-lg text-foreground/80 mb-8 leading-relaxed text-body">
                 Leverage machine learning for accurate demand forecasting,
                 statistical anomaly detection, and operations research heuristics
                 to optimize your inventory in real-time.
@@ -40,7 +40,7 @@ export default function Index() {
                 <Link to="/dashboard">
                   <Button
                     size="lg"
-                    className="bg-gradient-to-r from-primary to-secondary w-full sm:w-auto"
+                    className="bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 neon-glow smooth-transition w-full sm:w-auto"
                   >
                     View Dashboard
                     <ArrowRight className="w-4 h-4 ml-2" />
@@ -49,10 +49,10 @@ export default function Index() {
               </div>
             </div>
             <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-secondary/20 rounded-2xl blur-3xl" />
-              <div className="relative bg-gradient-to-br from-primary/5 to-secondary/5 rounded-2xl border border-primary/10 p-8">
+              <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-secondary/20 rounded-2xl blur-3xl animate-pulse" />
+              <div className="relative glass-card rounded-2xl p-8 neon-border">
                 <div className="space-y-4">
-                  <div className="flex items-center gap-3 p-3 bg-white rounded-lg border border-border">
+                  <div className="flex items-center gap-3 p-3 glass rounded-lg border border-border/50 hover-lift smooth-transition">
                     <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
                       <TrendingUp className="w-5 h-5 text-primary" />
                     </div>
@@ -61,18 +61,18 @@ export default function Index() {
                       <p className="font-semibold">+23.5%</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 p-3 bg-white rounded-lg border border-border">
-                    <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center">
+                  <div className="flex items-center gap-3 p-3 glass rounded-lg border border-border/50 hover-lift smooth-transition">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-secondary/30 to-secondary/10 flex items-center justify-center neon-glow-secondary">
                       <AlertTriangle className="w-5 h-5 text-secondary" />
                     </div>
                     <div>
                       <p className="text-xs text-foreground/50">Anomalies</p>
-                      <p className="font-semibold">2 Alerts</p>
+                      <p className="font-semibold text-foreground">2 Alerts</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 p-3 bg-white rounded-lg border border-border">
-                    <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
-                      <Zap className="w-5 h-5 text-green-600" />
+                  <div className="flex items-center gap-3 p-3 glass rounded-lg border border-border/50 hover-lift smooth-transition">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-400/30 to-green-400/10 flex items-center justify-center">
+                      <Zap className="w-5 h-5 text-green-400" />
                     </div>
                     <div>
                       <p className="text-xs text-foreground/50">Optimized</p>
@@ -86,13 +86,14 @@ export default function Index() {
         </section>
 
         {/* Features Section */}
-        <section id="features" className="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-transparent to-primary/5">
-          <div className="max-w-7xl mx-auto">
+        <section id="features" className="py-20 px-4 sm:px-6 lg:px-8 relative">
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/5 to-secondary/5"></div>
+          <div className="max-w-7xl mx-auto relative z-10">
             <div className="text-center mb-16">
-              <h2 className="text-4xl font-bold mb-4 text-foreground">
+              <h2 className="text-3xl sm:text-4xl font-bold mb-4 gradient-text font-heading">
                 Powerful Features for Modern Supply Chains
               </h2>
-              <p className="text-lg text-foreground/60 max-w-2xl mx-auto">
+              <p className="text-lg text-foreground/70 max-w-2xl mx-auto leading-relaxed">
                 Our platform combines cutting-edge AI, statistical analysis, and
                 optimization algorithms to transform your inventory management.
               </p>
@@ -100,12 +101,12 @@ export default function Index() {
 
             <div className="grid md:grid-cols-3 gap-8">
               {/* Demand Forecasting */}
-              <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow">
+              <Card className="futuristic-card hover-lift">
                 <CardHeader>
-                  <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center mb-4">
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center mb-4 neon-glow">
                     <Brain className="w-6 h-6 text-primary" />
                   </div>
-                  <CardTitle className="text-xl">ML Demand Forecasting</CardTitle>
+                  <CardTitle className="text-xl sm:text-2xl gradient-text font-heading">ML Demand Forecasting</CardTitle>
                 </CardHeader>
                 <CardContent className="text-foreground/70">
                   Advanced machine learning models that predict demand patterns
@@ -115,12 +116,12 @@ export default function Index() {
               </Card>
 
               {/* Anomaly Detection */}
-              <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow">
+              <Card className="futuristic-card hover-lift">
                 <CardHeader>
-                  <div className="w-12 h-12 rounded-lg bg-purple-100 flex items-center justify-center mb-4">
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-secondary/30 to-secondary/10 flex items-center justify-center mb-4 neon-glow-secondary">
                     <Shield className="w-6 h-6 text-secondary" />
                   </div>
-                  <CardTitle className="text-xl">Anomaly Detection</CardTitle>
+                  <CardTitle className="text-xl sm:text-2xl gradient-text font-heading">Anomaly Detection</CardTitle>
                 </CardHeader>
                 <CardContent className="text-foreground/70">
                   Statistical process control algorithms that detect unusual
@@ -130,12 +131,12 @@ export default function Index() {
               </Card>
 
               {/* Inventory Optimization */}
-              <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow">
+              <Card className="futuristic-card hover-lift">
                 <CardHeader>
-                  <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center mb-4">
-                    <Zap className="w-6 h-6 text-green-600" />
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-green-400/30 to-green-400/10 flex items-center justify-center mb-4">
+                    <Zap className="w-6 h-6 text-green-400" />
                   </div>
-                  <CardTitle className="text-xl">Inventory Optimization</CardTitle>
+                  <CardTitle className="text-xl sm:text-2xl gradient-text font-heading">Inventory Optimization</CardTitle>
                 </CardHeader>
                 <CardContent className="text-foreground/70">
                   Operations research heuristics that optimize stock levels, order
@@ -177,12 +178,12 @@ export default function Index() {
                 { icon: Zap, label: "Cost Reduction" },
                 { icon: AlertTriangle, label: "Anomaly Detection" },
               ].map(({ icon: Icon, label }) => (
-                <Card key={label} className="border-0">
+                <Card key={label} className="futuristic-card hover-lift">
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between mb-4">
-                      <Icon className="w-8 h-8 text-primary/60" />
+                      <Icon className="w-8 h-8 text-primary neon-glow" />
                     </div>
-                    <p className="text-sm text-foreground/60">{label}</p>
+                    <p className="text-sm text-foreground/70 font-medium">{label}</p>
                   </CardContent>
                 </Card>
               ))}

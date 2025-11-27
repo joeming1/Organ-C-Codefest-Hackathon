@@ -32,14 +32,22 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-secondary/5 px-4">
-      <Card className="w-full max-w-md shadow-xl border-0">
+    <div className="min-h-screen flex items-center justify-center px-4 relative overflow-hidden">
+      {/* Animated background */}
+      <div className="absolute inset-0 grid-pattern opacity-30"></div>
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-secondary/10"></div>
+      
+      {/* Floating orbs */}
+      <div className="absolute top-20 left-20 w-72 h-72 bg-primary/20 rounded-full blur-3xl animate-pulse"></div>
+      <div className="absolute bottom-20 right-20 w-96 h-96 bg-secondary/20 rounded-full blur-3xl animate-pulse delay-1000"></div>
+      
+      <Card className="w-full max-w-md glass-card relative z-10 hover-lift">
         <CardHeader className="space-y-1 text-center">
-          <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-            <Lock className="w-8 h-8 text-primary" />
+          <div className="mx-auto w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center mb-4 neon-glow">
+            <Lock className="w-10 h-10 text-white drop-shadow-lg" />
           </div>
-          <CardTitle className="text-3xl font-bold">Admin Login</CardTitle>
-          <CardDescription>
+          <CardTitle className="text-3xl sm:text-4xl font-bold gradient-text font-heading">Admin Login</CardTitle>
+          <CardDescription className="text-foreground/70 text-base leading-relaxed">
             Enter your credentials to access the admin dashboard
           </CardDescription>
         </CardHeader>
@@ -53,16 +61,16 @@ export default function Login() {
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="username">Username</Label>
+              <Label htmlFor="username" className="text-foreground font-medium">Username</Label>
               <div className="relative">
-                <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                <User className="absolute left-3 top-3 h-4 w-4 text-primary" />
                 <Input
                   id="username"
                   type="text"
-                  placeholder="Enter username"
+                  placeholder="Enter your username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="pl-10"
+                  className="pl-10 glass border-border/50 focus:border-primary focus:ring-primary/50 smooth-transition"
                   required
                   autoFocus
                   disabled={isLoading}
@@ -71,16 +79,16 @@ export default function Login() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password" className="text-foreground font-medium">Password</Label>
               <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                <Lock className="absolute left-3 top-3 h-4 w-4 text-primary" />
                 <Input
                   id="password"
                   type="password"
-                  placeholder="Enter password"
+                  placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10"
+                  className="pl-10 glass border-border/50 focus:border-primary focus:ring-primary/50 smooth-transition"
                   required
                   disabled={isLoading}
                 />
@@ -89,7 +97,7 @@ export default function Login() {
 
             <Button
               type="submit"
-              className="w-full"
+              className="w-full bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 neon-glow smooth-transition"
               size="lg"
               disabled={isLoading}
             >
@@ -124,5 +132,6 @@ export default function Login() {
     </div>
   );
 }
+
 
 

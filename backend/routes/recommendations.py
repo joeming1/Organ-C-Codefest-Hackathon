@@ -112,8 +112,7 @@ def get_recommendations(
     
     Returns actionable recommendations for staffing, inventory, pricing, etc.
     """
-    # Use view (no copy) since we're only filtering/reading
-    df = load_raw_data(copy=False)
+    df = load_raw_data()
     store_data = df[df["Store"] == store_id]
     
     if store_data.empty:

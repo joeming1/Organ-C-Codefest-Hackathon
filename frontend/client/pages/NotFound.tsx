@@ -9,7 +9,7 @@ export default function NotFound() {
   return (
     <>
       <Navigation />
-      <main className="min-h-screen flex items-center justify-center bg-gradient-to-b from-white to-slate-50 px-4">
+      <main className="min-h-screen flex items-center justify-center bg-background px-4">
         <div className="text-center max-w-md">
           <div className="mb-6">
             <div className="text-6xl font-bold text-foreground mb-2">404</div>

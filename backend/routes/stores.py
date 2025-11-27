@@ -12,8 +12,7 @@ def list_stores():
     
     Returns store IDs, total sales, average weekly sales, and department count.
     """
-    # Use view (no copy) since we're only aggregating/reading
-    df = load_raw_data(copy=False)
+    df = load_raw_data()
     
     # Aggregate store data
     store_stats = df.groupby("Store").agg({
@@ -45,8 +44,7 @@ def get_top_stores(limit: int = 10):
     """
     Get top performing stores by total sales.
     """
-    # Use view (no copy) since we're only aggregating/reading
-    df = load_raw_data(copy=False)
+    df = load_raw_data()
     
     top_stores = df.groupby("Store")["Weekly_Sales"].sum() \
         .sort_values(ascending=False) \
