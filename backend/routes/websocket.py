@@ -44,7 +44,9 @@ async def websocket_alerts(
     };
     ```
     """
+    await websocket.accept()
     await manager.connect(websocket, client_id)
+ 
     
     # Send welcome message
     await manager.send_personal_message({
